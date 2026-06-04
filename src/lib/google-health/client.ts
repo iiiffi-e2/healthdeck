@@ -65,6 +65,27 @@ function civilDateFromInterval(civil?: { date?: CivilDate }): string | null {
   return formatCivilDate(new Date(d.year, d.month - 1, d.day));
 }
 
+function dailyCivilDateKey(civil?: CivilDate): string | null {
+  if (!civil?.year || !civil?.month || !civil?.day) return null;
+  return formatCivilDate(new Date(civil.year, civil.month - 1, civil.day));
+}
+
+function dailyListPointInDateRange(
+  point: HealthDataPoint,
+  start: string,
+  end: string
+): boolean {
+  const key =
+    dailyCivilDateKey(point.dailyRestingHeartRate?.date) ??
+    dailyCivilDateKey(point.dailyHeartRateVariability?.date);
+  return key != null && key >= start && key < end;
+}
+
+const DAILY_LIST_DATE_FILTER_TYPES = [
+  "daily-resting-heart-rate",
+  "daily-heart-rate-variability",
+] as const;
+
 function* chunkDateRange(
   startDate: Date,
   endDate: Date,
@@ -276,6 +297,13 @@ async function fetchListPages(
           const key = formatCivilDate(new Date(d.year, d.month - 1, d.day));
           return key >= start && key < end;
         });
+      } else if (
+        DAILY_LIST_DATE_FILTER_TYPES.includes(
+          dataType as (typeof DAILY_LIST_DATE_FILTER_TYPES)[number]
+        ) &&
+        !filter
+      ) {
+        points = points.filter((p) => dailyListPointInDateRange(p, start, end));
       }
       allPoints.push(...points);
     }
@@ -330,7 +358,15 @@ export async function listHealthDataPoints(
     maxPages
   );
 
-  if (dataType === "sleep" && allPoints.length === 0) {
+  const retryWithoutFilter =
+    filter &&
+    allPoints.length === 0 &&
+    (dataType === "sleep" ||
+      DAILY_LIST_DATE_FILTER_TYPES.includes(
+        dataType as (typeof DAILY_LIST_DATE_FILTER_TYPES)[number]
+      ));
+
+  if (retryWithoutFilter) {
     allPoints = await fetchListPages(
       userId,
       parent,

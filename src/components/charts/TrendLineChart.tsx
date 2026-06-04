@@ -13,7 +13,7 @@ import { Box, Skeleton, Typography } from "@mui/material";
 import { format } from "date-fns";
 
 interface TrendLineChartProps {
-  data: { date: string; value: number }[];
+  data: { date: string; value: number | null }[];
   color?: string;
   unit?: string;
   loading?: boolean;

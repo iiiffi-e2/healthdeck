@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSession } from "next-auth/react";
 import { Grid, Card, CardContent, Typography, Box, Alert } from "@mui/material";
 import DirectionsWalkIcon from "@mui/icons-material/DirectionsWalk";
 import BedtimeIcon from "@mui/icons-material/Bedtime";
@@ -18,6 +19,10 @@ import { SyncButton } from "@/components/dashboard/SyncButton";
 import { useHealthEndpoint } from "@/hooks/useHealthData";
 import type { DateRangeDays } from "@/lib/constants";
 import { formatMinutes, formatNumber } from "@/lib/health/data";
+import {
+  firstNameFromDisplayName,
+  latestNumericMetric,
+} from "@/lib/health/dashboard-metrics";
 
 interface SummaryRow {
   date: string;
@@ -31,20 +36,29 @@ interface SummaryRow {
 
 export default function DashboardPage() {
   const [range, setRange] = useState<DateRangeDays>(30);
+  const { data: session } = useSession();
   const { data, loading, error, refetch } = useHealthEndpoint("/api/health/summary", range);
 
   const summaries = (data?.summaries ?? []) as SummaryRow[];
-  const today = summaries[summaries.length - 1];
+  const latestSteps = latestNumericMetric(summaries, "steps");
+  const latestSleep = latestNumericMetric(summaries, "sleepMinutes");
+  const latestRhr = latestNumericMetric(summaries, "restingHeartRate");
+  const latestActive = latestNumericMetric(summaries, "activeMinutes");
+  const latestHrv = latestNumericMetric(summaries, "hrv");
+  const latestSpo2 = latestNumericMetric(summaries, "oxygenSaturation");
   const insightCards = data?.insightCards as
     | { sleep: string; heart: string; activity: string }
     | undefined;
   const status = data?.status as { lastSyncedAt?: string; mockMode?: boolean } | undefined;
 
   const chartData = (key: keyof SummaryRow, color: string) => ({
-    data: summaries.map((s) => ({
-      date: s.date,
-      value: Number(s[key] ?? 0),
-    })),
+    data: summaries.map((s) => {
+      const v = s[key];
+      return {
+        date: s.date,
+        value: typeof v === "number" && Number.isFinite(v) ? v : null,
+      };
+    }),
     color,
   });
 
@@ -55,10 +69,15 @@ export default function DashboardPage() {
     return "Good evening";
   };
 
+  const firstName = firstNameFromDisplayName(session?.user?.name);
+  const title = firstName
+    ? `${greeting()}, ${firstName} 👋`
+    : `${greeting()} 👋`;
+
   return (
     <>
       <PageHeader
-        title={`${greeting()} 👋`}
+        title={title}
         subtitle={
           status?.lastSyncedAt
             ? `Last synced ${format(new Date(status.lastSyncedAt), "PPp")}${status.mockMode ? " · Demo data" : ""}`
@@ -82,7 +101,7 @@ export default function DashboardPage() {
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
           <MetricCard
             label="Steps today"
-            value={formatNumber(today?.steps)}
+            value={formatNumber(latestSteps)}
             icon={<DirectionsWalkIcon />}
             color="#2563EB"
             loading={loading}
@@ -91,7 +110,7 @@ export default function DashboardPage() {
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
           <MetricCard
             label="Sleep last night"
-            value={formatMinutes(today?.sleepMinutes)}
+            value={formatMinutes(latestSleep)}
             icon={<BedtimeIcon />}
             color="#8B5CF6"
             loading={loading}
@@ -100,7 +119,7 @@ export default function DashboardPage() {
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
           <MetricCard
             label="Resting heart rate"
-            value={today?.restingHeartRate ? `${today.restingHeartRate} bpm` : "—"}
+            value={latestRhr ? `${latestRhr} bpm` : "—"}
             icon={<FavoriteIcon />}
             color="#EF4444"
             loading={loading}
@@ -109,7 +128,7 @@ export default function DashboardPage() {
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
           <MetricCard
             label="Active minutes"
-            value={formatNumber(today?.activeMinutes, " min")}
+            value={formatNumber(latestActive, " min")}
             icon={<TimerIcon />}
             color="#14B8A6"
             loading={loading}
@@ -118,7 +137,7 @@ export default function DashboardPage() {
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
           <MetricCard
             label="HRV"
-            value={today?.hrv ? `${today.hrv} ms` : "—"}
+            value={latestHrv ? `${latestHrv} ms` : "—"}
             icon={<MonitorHeartIcon />}
             color="#F59E0B"
             loading={loading}
@@ -127,7 +146,7 @@ export default function DashboardPage() {
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
           <MetricCard
             label="Oxygen saturation"
-            value={today?.oxygenSaturation ? `${today.oxygenSaturation}%` : "—"}
+            value={latestSpo2 ? `${latestSpo2}%` : "—"}
             icon={<AirIcon />}
             color="#22C55E"
             loading={loading}

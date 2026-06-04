@@ -199,17 +199,36 @@ export function parseOxygenDataPoint(point: HealthDataPoint): {
   };
 }
 
+function parseBeatsPerMinute(value?: string | number): number | null {
+  if (value == null || value === "") return null;
+  const n =
+    typeof value === "number" ? value : Number.parseInt(String(value), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function hrvMillisecondsFromDaily(
+  hrv: NonNullable<HealthDataPoint["dailyHeartRateVariability"]>
+): number | null {
+  if (hrv.averageHeartRateVariabilityMilliseconds != null) {
+    return Math.round(hrv.averageHeartRateVariabilityMilliseconds);
+  }
+  if (hrv.deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds != null) {
+    return Math.round(hrv.deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds);
+  }
+  return null;
+}
+
 export function parseRestingHeartRateDataPoint(point: HealthDataPoint): {
   date: Date;
   patch: DailyMetricsPatch;
 } | null {
   const rhr = point.dailyRestingHeartRate;
   const date = dateFromCivilDate(rhr?.date);
-  if (!date || !rhr?.beatsPerMinute) return null;
-  const bpm = Number.parseInt(rhr.beatsPerMinute, 10);
+  const bpm = parseBeatsPerMinute(rhr?.beatsPerMinute);
+  if (!date || bpm == null) return null;
   return {
     date,
-    patch: { restingHeartRate: Number.isFinite(bpm) ? bpm : null },
+    patch: { restingHeartRate: bpm },
   };
 }
 
@@ -219,10 +238,11 @@ export function parseHeartRateVariabilityDataPoint(point: HealthDataPoint): {
 } | null {
   const hrv = point.dailyHeartRateVariability;
   const date = dateFromCivilDate(hrv?.date);
-  if (!date || hrv?.averageHeartRateVariabilityMilliseconds == null) return null;
+  const ms = hrv ? hrvMillisecondsFromDaily(hrv) : null;
+  if (!date || ms == null) return null;
   return {
     date,
-    patch: { hrv: Math.round(hrv.averageHeartRateVariabilityMilliseconds) },
+    patch: { hrv: ms },
   };
 }
 

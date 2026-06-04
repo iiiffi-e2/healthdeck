@@ -93,10 +93,13 @@ export interface HealthDataPoint {
   };
   dailyRestingHeartRate?: {
     date?: CivilDate;
-    beatsPerMinute?: string;
+    beatsPerMinute?: string | number;
   };
   dailyHeartRateVariability?: {
     date?: CivilDate;
     averageHeartRateVariabilityMilliseconds?: number;
+    deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds?: number;
+    entropy?: number;
+    nonRemHeartRateBeatsPerMinute?: string;
   };
 }

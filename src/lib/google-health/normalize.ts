@@ -1,5 +1,5 @@
 import type { DailySummary, ExerciseSession, Prisma } from "@prisma/client";
-import type { HealthDataPoint } from "./api-types";
+import type { CivilDate, HealthDataPoint } from "./api-types";
 import {
   civilDateTimeToDate,
   parseDurationMinutes,
@@ -19,6 +19,11 @@ export type ExerciseSessionInput = Omit<
 
 function dateKey(date: Date): string {
   return date.toISOString().split("T")[0]!;
+}
+
+function dateFromCivilDate(d?: CivilDate): Date | null {
+  if (!d?.year || !d?.month || !d?.day) return null;
+  return new Date(d.year, d.month - 1, d.day);
 }
 
 export function mergeDailyPatches(
@@ -103,11 +108,38 @@ export function parseOxygenDataPoint(point: HealthDataPoint): {
   patch: DailyMetricsPatch;
 } | null {
   const o2 = point.dailyOxygenSaturation;
-  if (!o2?.date?.year || !o2.date.month || !o2.date.day) return null;
-  const date = new Date(o2.date.year, o2.date.month - 1, o2.date.day);
+  const date = dateFromCivilDate(o2?.date);
+  if (!date) return null;
   return {
     date,
-    patch: { oxygenSaturation: o2.averagePercentage ?? null },
+    patch: { oxygenSaturation: o2?.averagePercentage ?? null },
+  };
+}
+
+export function parseRestingHeartRateDataPoint(point: HealthDataPoint): {
+  date: Date;
+  patch: DailyMetricsPatch;
+} | null {
+  const rhr = point.dailyRestingHeartRate;
+  const date = dateFromCivilDate(rhr?.date);
+  if (!date || !rhr?.beatsPerMinute) return null;
+  const bpm = Number.parseInt(rhr.beatsPerMinute, 10);
+  return {
+    date,
+    patch: { restingHeartRate: Number.isFinite(bpm) ? bpm : null },
+  };
+}
+
+export function parseHeartRateVariabilityDataPoint(point: HealthDataPoint): {
+  date: Date;
+  patch: DailyMetricsPatch;
+} | null {
+  const hrv = point.dailyHeartRateVariability;
+  const date = dateFromCivilDate(hrv?.date);
+  if (!date || hrv?.averageHeartRateVariabilityMilliseconds == null) return null;
+  return {
+    date,
+    patch: { hrv: Math.round(hrv.averageHeartRateVariabilityMilliseconds) },
   };
 }
 

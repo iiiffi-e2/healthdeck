@@ -68,4 +68,12 @@ export interface HealthDataPoint {
     date?: CivilDate;
     averagePercentage?: number;
   };
+  dailyRestingHeartRate?: {
+    date?: CivilDate;
+    beatsPerMinute?: string;
+  };
+  dailyHeartRateVariability?: {
+    date?: CivilDate;
+    averageHeartRateVariabilityMilliseconds?: number;
+  };
 }

@@ -11,7 +11,9 @@ import {
   applyPatchToMap,
   mergeDailyPatches,
   parseExerciseDataPoint,
+  parseHeartRateVariabilityDataPoint,
   parseOxygenDataPoint,
+  parseRestingHeartRateDataPoint,
   parseSleepDataPoint,
 } from "./normalize";
 import { ensureHealthTokens } from "./tokens";
@@ -78,11 +80,15 @@ export async function syncUserHealthData(userId: string): Promise<{
 
       const listPoints = await fetchSessionAndDailyPoints(userId, SYNC_DAYS);
       for (const point of listPoints) {
-        const sleep = parseSleepDataPoint(point);
-        if (sleep) applyPatchToMap(byDate, sleep.date, sleep.patch);
-
-        const oxygen = parseOxygenDataPoint(point);
-        if (oxygen) applyPatchToMap(byDate, oxygen.date, oxygen.patch);
+        const patches = [
+          parseSleepDataPoint(point),
+          parseOxygenDataPoint(point),
+          parseRestingHeartRateDataPoint(point),
+          parseHeartRateVariabilityDataPoint(point),
+        ];
+        for (const parsed of patches) {
+          if (parsed) applyPatchToMap(byDate, parsed.date, parsed.patch);
+        }
       }
 
       const summaries = mergeDailyPatches(userId, byDate);

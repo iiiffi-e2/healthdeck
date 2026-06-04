@@ -1,4 +1,4 @@
-import { format, subDays } from "date-fns";
+import { addDays, format, min as minDate, subDays } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { decryptToken, encryptToken } from "@/lib/crypto";
 import { useMockHealthData } from "@/lib/config";
@@ -6,7 +6,7 @@ import { ensureHealthTokens } from "./tokens";
 import {
   DAILY_LIST_DATA_TYPES,
   DAILY_ROLLUP_DATA_TYPES,
-  ROLLUP_RANGE_DAYS,
+  ROLLUP_MAX_QUERY_DAYS,
   SESSION_LIST_DATA_TYPES,
   type DailyRollupDataType,
 } from "./data-types";
@@ -36,6 +36,19 @@ function civilRange(start: Date, end: Date): CivilTimeInterval {
 
 function formatCivilDate(d: Date): string {
   return format(d, "yyyy-MM-dd");
+}
+
+function* chunkDateRange(
+  startDate: Date,
+  endDate: Date,
+  maxDays: number
+): Generator<{ start: Date; end: Date }> {
+  let cursor = startDate;
+  while (cursor < endDate) {
+    const chunkEnd = minDate([addDays(cursor, maxDays), endDate]);
+    yield { start: cursor, end: chunkEnd };
+    cursor = chunkEnd;
+  }
 }
 
 export async function refreshGoogleHealthToken(userId: string): Promise<string | null> {
@@ -140,45 +153,49 @@ export async function fetchDailyRollups(
 ): Promise<DailyRollupDataPoint[]> {
   if (useMockHealthData()) return [];
 
-  const rangeDays = ROLLUP_RANGE_DAYS[dataType];
-  const effectiveStart =
-    startDate < subDays(endDate, rangeDays) ? subDays(endDate, rangeDays) : startDate;
-
+  const maxQueryDays = ROLLUP_MAX_QUERY_DAYS[dataType];
   const parent = `users/me/dataTypes/${dataType}`;
   const path = `/v4/${parent}/dataPoints:dailyRollUp`;
-
   const allPoints: DailyRollupDataPoint[] = [];
-  let pageToken: string | undefined;
 
-  do {
-    const body = {
-      range: civilRange(effectiveStart, endDate),
-      windowSizeDays: 1,
-      pageSize: 1000,
-      ...(pageToken ? { pageToken } : {}),
-    };
+  for (const chunk of chunkDateRange(startDate, endDate, maxQueryDays)) {
+    let pageToken: string | undefined;
 
-    const response = await healthApiFetch(userId, path, {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
+    do {
+      const body = {
+        range: civilRange(chunk.start, chunk.end),
+        windowSizeDays: 1,
+        pageSize: maxQueryDays,
+        ...(pageToken ? { pageToken } : {}),
+      };
 
-    if (!response?.ok) {
-      const errText = response ? await response.text() : "no token";
-      console.error(`Google Health dailyRollUp ${dataType} failed:`, response?.status, errText);
-      break;
-    }
+      const response = await healthApiFetch(userId, path, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
 
-    const json = (await response.json()) as {
-      rollupDataPoints?: DailyRollupDataPoint[];
-      nextPageToken?: string;
-    };
+      if (!response?.ok) {
+        const errText = response ? await response.text() : "no token";
+        console.error(
+          `Google Health dailyRollUp ${dataType} failed:`,
+          response?.status,
+          errText
+        );
+        pageToken = undefined;
+        break;
+      }
 
-    if (json.rollupDataPoints?.length) {
-      allPoints.push(...json.rollupDataPoints);
-    }
-    pageToken = json.nextPageToken;
-  } while (pageToken);
+      const json = (await response.json()) as {
+        rollupDataPoints?: DailyRollupDataPoint[];
+        nextPageToken?: string;
+      };
+
+      if (json.rollupDataPoints?.length) {
+        allPoints.push(...json.rollupDataPoints);
+      }
+      pageToken = json.nextPageToken;
+    } while (pageToken);
+  }
 
   return allPoints;
 }
@@ -195,25 +212,30 @@ export async function listHealthDataPoints(
   const end = formatCivilDate(endDate);
   const parent = `users/me/dataTypes/${dataType}`;
 
-  let filter: string;
-  if (dataType === "sleep") {
-    filter = `sleep.interval.civil_end_time >= "${start}" AND sleep.interval.civil_end_time < "${end}"`;
-  } else if (dataType === "exercise") {
-    filter = `exercise.interval.civil_start_time >= "${start}" AND exercise.interval.civil_start_time < "${end}"`;
-  } else if (dataType === "daily-oxygen-saturation") {
-    filter = `dailyOxygenSaturation.date >= "${start}" AND dailyOxygenSaturation.date < "${end}"`;
-  } else {
-    return [];
-  }
+  const filterByType: Record<string, string> = {
+    sleep: `sleep.interval.civil_end_time >= "${start}" AND sleep.interval.civil_end_time < "${end}"`,
+    exercise: `exercise.interval.civil_start_time >= "${start}" AND exercise.interval.civil_start_time < "${end}"`,
+    "daily-resting-heart-rate": `dailyRestingHeartRate.date >= "${start}" AND dailyRestingHeartRate.date < "${end}"`,
+    "daily-heart-rate-variability": `dailyHeartRateVariability.date >= "${start}" AND dailyHeartRateVariability.date < "${end}"`,
+  };
+
+  const filter = filterByType[dataType];
+  const pageSize =
+    dataType === "sleep" || dataType === "exercise"
+      ? "25"
+      : dataType === "daily-oxygen-saturation"
+        ? "100"
+        : "100";
 
   const allPoints: HealthDataPoint[] = [];
   let pageToken: string | undefined;
+  const isOxygenWithoutFilter = dataType === "daily-oxygen-saturation" && !filter;
+  let pagesFetched = 0;
+  const maxPages = isOxygenWithoutFilter ? 15 : 50;
 
   do {
-    const params = new URLSearchParams({
-      filter,
-      pageSize: dataType === "sleep" || dataType === "exercise" ? "25" : "100",
-    });
+    const params = new URLSearchParams({ pageSize });
+    if (filter) params.set("filter", filter);
     if (pageToken) params.set("pageToken", pageToken);
 
     const response = await healthApiFetch(
@@ -232,10 +254,19 @@ export async function listHealthDataPoints(
     };
 
     if (json.dataPoints?.length) {
-      allPoints.push(...json.dataPoints);
+      const points = isOxygenWithoutFilter
+        ? json.dataPoints.filter((p) => {
+            const d = p.dailyOxygenSaturation?.date;
+            if (!d?.year || !d.month || !d.day) return false;
+            const key = formatCivilDate(new Date(d.year, d.month - 1, d.day));
+            return key >= start && key < end;
+          })
+        : json.dataPoints;
+      allPoints.push(...points);
     }
     pageToken = json.nextPageToken;
-  } while (pageToken);
+    pagesFetched++;
+  } while (pageToken && pagesFetched < maxPages);
 
   return allPoints;
 }

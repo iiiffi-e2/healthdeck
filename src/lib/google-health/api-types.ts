@@ -45,13 +45,24 @@ export interface DailyRollupDataPoint {
 export interface HealthDataPoint {
   name?: string;
   sleep?: {
-    interval?: { civilEndTime?: CivilDateTime; civilStartTime?: CivilDateTime };
+    interval?: {
+      civilEndTime?: CivilDateTime;
+      civilStartTime?: CivilDateTime;
+      startTime?: string;
+      endTime?: string;
+    };
     summary?: {
       minutesAsleep?: string;
       minutesAwake?: string;
+      minutesInSleepPeriod?: string;
       stagesSummary?: Array<{ type?: string; minutes?: string }>;
     };
-    metadata?: { nap?: boolean };
+    stages?: Array<{
+      type?: string;
+      startTime?: string;
+      endTime?: string;
+    }>;
+    metadata?: { nap?: boolean; processed?: boolean };
   };
   exercise?: {
     interval?: { civilStartTime?: CivilDateTime };

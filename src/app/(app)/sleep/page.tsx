@@ -33,16 +33,26 @@ export default function SleepPage() {
   const worst = data?.worst as SleepSummary | null;
   const insights = (data?.insights ?? []) as { message: string }[];
   const latest = summaries[summaries.length - 1];
+  const connected = Boolean(data?.connected);
+  const totalSummaries = Number(data?.totalSummaries ?? 0);
 
   if (!loading && !summaries.length) {
+    const description = connected
+      ? totalSummaries > 0
+        ? "Your account is connected and other metrics synced, but no sleep sessions were found in Google Health for this date range. Try a longer range or confirm sleep is recorded in the Google/Fitbit app."
+        : "Your account is connected. Run a sync from Settings to pull sleep sessions from Google Health."
+      : "Connect Google Health and sync to see your sleep trends.";
+
     return (
       <>
         <PageHeader title="Sleep" subtitle="Duration, stages, and trends" />
         <EmptyState
           title="No sleep data yet"
-          description="Connect Google Health and sync to see your sleep trends."
-          actionLabel="Connect account"
-          onAction={() => (window.location.href = "/connect")}
+          description={description}
+          actionLabel={connected ? "Open settings" : "Connect account"}
+          onAction={() =>
+            (window.location.href = connected ? "/settings" : "/connect")
+          }
         />
       </>
     );

@@ -92,7 +92,7 @@ export default function ConnectPage() {
               size="large"
               startIcon={<GoogleIcon />}
               onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
-              disabled={status === "loading"}
+              disabled={status === "loading" || !!session}
               sx={{ mt: 2, py: 1.5 }}
             >
               Continue with Google

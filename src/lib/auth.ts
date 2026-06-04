@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { GOOGLE_HEALTH_SCOPES_PLACEHOLDER } from "@/lib/constants";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  trustHost: true,
   adapter: PrismaAdapter(prisma),
   providers: [
     Google({

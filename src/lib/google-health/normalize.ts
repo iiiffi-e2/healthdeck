@@ -1,5 +1,11 @@
 import type { DailySummary, ExerciseSession, Prisma } from "@prisma/client";
-import type { RawHealthPayload } from "./types";
+import type { HealthDataPoint } from "./api-types";
+import {
+  civilDateTimeToDate,
+  parseDurationMinutes,
+  parseIntString,
+  type DailyMetricsPatch,
+} from "./rollup-parser";
 
 export type DailySummaryInput = Omit<
   DailySummary,
@@ -11,14 +17,139 @@ export type ExerciseSessionInput = Omit<
   "id" | "createdAt" | "updatedAt"
 >;
 
+function dateKey(date: Date): string {
+  return date.toISOString().split("T")[0]!;
+}
+
+export function mergeDailyPatches(
+  userId: string,
+  byDate: Map<string, DailyMetricsPatch>
+): DailySummaryInput[] {
+  return Array.from(byDate.entries()).map(([key, patch]) => ({
+    userId,
+    date: new Date(key),
+    steps: patch.steps ?? null,
+    calories: patch.calories ?? null,
+    distanceMeters: patch.distanceMeters ?? null,
+    activeMinutes: patch.activeMinutes ?? null,
+    sleepMinutes: patch.sleepMinutes ?? null,
+    deepSleepMinutes: patch.deepSleepMinutes ?? null,
+    remSleepMinutes: patch.remSleepMinutes ?? null,
+    lightSleepMinutes: patch.lightSleepMinutes ?? null,
+    awakeMinutes: patch.awakeMinutes ?? null,
+    sleepScore: null,
+    restingHeartRate: patch.restingHeartRate ?? null,
+    avgHeartRate: patch.avgHeartRate ?? null,
+    minHeartRate: patch.minHeartRate ?? null,
+    maxHeartRate: patch.maxHeartRate ?? null,
+    hrv: patch.hrv ?? null,
+    oxygenSaturation: patch.oxygenSaturation ?? null,
+    vo2Max: patch.vo2Max ?? null,
+    weightKg: patch.weightKg ?? null,
+    source: "google-health",
+    raw: patch as unknown as Prisma.JsonValue,
+  }));
+}
+
+export function applyPatchToMap(
+  map: Map<string, DailyMetricsPatch>,
+  date: Date,
+  patch: DailyMetricsPatch
+): void {
+  const key = dateKey(date);
+  const existing = map.get(key) ?? {};
+  map.set(key, { ...existing, ...patch });
+}
+
+export function parseSleepDataPoint(point: HealthDataPoint): {
+  date: Date;
+  patch: DailyMetricsPatch;
+} | null {
+  const sleep = point.sleep;
+  if (!sleep?.summary) return null;
+
+  const date =
+    civilDateTimeToDate(sleep.interval?.civilEndTime) ??
+    civilDateTimeToDate(sleep.interval?.civilStartTime);
+  if (!date) return null;
+
+  const patch: DailyMetricsPatch = {
+    sleepMinutes: parseIntString(sleep.summary.minutesAsleep),
+    awakeMinutes: parseIntString(sleep.summary.minutesAwake),
+  };
+
+  for (const stage of sleep.summary.stagesSummary ?? []) {
+    const minutes = parseIntString(stage.minutes) ?? 0;
+    switch (stage.type) {
+      case "DEEP":
+        patch.deepSleepMinutes = (patch.deepSleepMinutes ?? 0) + minutes;
+        break;
+      case "REM":
+        patch.remSleepMinutes = (patch.remSleepMinutes ?? 0) + minutes;
+        break;
+      case "LIGHT":
+        patch.lightSleepMinutes = (patch.lightSleepMinutes ?? 0) + minutes;
+        break;
+      default:
+        break;
+    }
+  }
+
+  return { date, patch };
+}
+
+export function parseOxygenDataPoint(point: HealthDataPoint): {
+  date: Date;
+  patch: DailyMetricsPatch;
+} | null {
+  const o2 = point.dailyOxygenSaturation;
+  if (!o2?.date?.year || !o2.date.month || !o2.date.day) return null;
+  const date = new Date(o2.date.year, o2.date.month - 1, o2.date.day);
+  return {
+    date,
+    patch: { oxygenSaturation: o2.averagePercentage ?? null },
+  };
+}
+
+export function parseExerciseDataPoint(
+  userId: string,
+  point: HealthDataPoint
+): ExerciseSessionInput | null {
+  const ex = point.exercise;
+  if (!ex?.displayName) return null;
+
+  const date = civilDateTimeToDate(ex.interval?.civilStartTime) ?? new Date();
+  const durationMinutes = parseDurationMinutes(ex.activeDuration) ?? 30;
+
+  const metrics = ex.metricsSummary;
+
+  return {
+    userId,
+    date,
+    type: (ex.exerciseType ?? "WORKOUT").toLowerCase().replace(/_/g, "-"),
+    title: ex.displayName,
+    durationMinutes,
+    calories: metrics?.caloriesKcal ?? null,
+    distanceMeters:
+      metrics?.distanceMillimeters != null
+        ? metrics.distanceMillimeters / 1000
+        : null,
+    avgHeartRate: metrics?.averageHeartRateBeatsPerMinute
+      ? Number.parseInt(metrics.averageHeartRateBeatsPerMinute, 10)
+      : null,
+    raw: ex as unknown as Prisma.JsonValue,
+  };
+}
+
+/** @deprecated Used for mock pipeline only */
 export function normalizeDailySummary(
   userId: string,
   date: Date,
-  rawData: RawHealthPayload
+  rawData: { dataPoints?: Array<{ dataType: string; value: number }>; source?: string }
 ): DailySummaryInput {
   const agg = rawData.dataPoints?.reduce(
     (acc, dp) => {
-      acc[dp.dataType] = typeof dp.value === "number" ? dp.value : 0;
+      acc[dp.dataType] = dp.value;
       return acc;
     },
     {} as Record<string, number>
@@ -46,13 +177,13 @@ export function normalizeDailySummary(
     vo2Max: agg?.["vo2-max"] ?? null,
     weightKg: agg?.weight ?? null,
     source: rawData.source ?? "google-health",
-    raw: rawData as Prisma.JsonValue,
+    raw: rawData as unknown as Prisma.JsonValue,
   };
 }
 
 export function normalizeExerciseSessions(
   userId: string,
-  rawData: RawHealthPayload
+  rawData: { sessions?: Record<string, unknown>[] }
 ): ExerciseSessionInput[] {
   if (!rawData.sessions?.length) return [];
 

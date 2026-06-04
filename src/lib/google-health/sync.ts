@@ -1,4 +1,3 @@
-import { startOfDay, subDays } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { toPrismaJson } from "@/lib/prisma-json";
 import { useMockHealthData } from "@/lib/config";
@@ -6,21 +5,18 @@ import {
   generateMockDailySummaries,
   generateMockExerciseSessions,
 } from "@/lib/mock/generateMockData";
-import { normalizeDailySummary, normalizeExerciseSessions } from "./normalize";
-import { getGoogleHealthDailyRollup } from "./client";
-import type { GoogleHealthDataType } from "./types";
+import { fetchAllRollupTypes, fetchSessionAndDailyPoints } from "./client";
+import { parseRollupToMetrics, type DailyMetricsPatch } from "./rollup-parser";
+import {
+  applyPatchToMap,
+  mergeDailyPatches,
+  parseExerciseDataPoint,
+  parseOxygenDataPoint,
+  parseSleepDataPoint,
+} from "./normalize";
+import { ensureHealthTokens } from "./tokens";
 
-const PRIORITY_DATA_TYPES: GoogleHealthDataType[] = [
-  "steps",
-  "heart-rate",
-  "resting-heart-rate",
-  "heart-rate-variability",
-  "oxygen-saturation",
-  "sleep",
-  "exercise",
-  "weight",
-  "vo2-max",
-];
+const SYNC_DAYS = 90;
 
 function mapSummaryForPrisma<T extends { raw?: unknown }>(summary: T) {
   return { ...summary, raw: toPrismaJson(summary.raw as never) };
@@ -63,60 +59,58 @@ export async function syncUserHealthData(userId: string): Promise<{
         recordsPulled += exercises.length;
       }
     } else {
-      const endDate = new Date().toISOString().split("T")[0]!;
-      const startDate = subDays(new Date(), 90).toISOString().split("T")[0]!;
-
-      for (const dataType of PRIORITY_DATA_TYPES) {
-        const rollups = await getGoogleHealthDailyRollup(
-          userId,
-          dataType,
-          startDate,
-          endDate
+      const hasTokens = await ensureHealthTokens(userId);
+      if (!hasTokens) {
+        throw new Error(
+          "No Google Health tokens. Sign in with Google again to grant health data access."
         );
-        for (const rollup of rollups) {
-          const date = startOfDay(new Date(rollup.date));
-          const normalized = mapSummaryForPrisma(
-            normalizeDailySummary(userId, date, {
-              dataPoints: [
-                {
-                  dataType,
-                  startTime: rollup.date,
-                  endTime: rollup.date,
-                  value: Object.values(rollup.aggregate)[0] ?? 0,
-                },
-              ],
-              source: "google-health",
-            })
-          );
-          await prisma.dailySummary.upsert({
-            where: { userId_date: { userId, date } },
-            create: normalized,
-            update: normalized,
-          });
-          recordsPulled++;
+      }
+
+      const byDate = new Map<string, DailyMetricsPatch>();
+
+      const rollupsByType = await fetchAllRollupTypes(userId, SYNC_DAYS);
+      for (const points of rollupsByType.values()) {
+        for (const point of points) {
+          const parsed = parseRollupToMetrics(point);
+          if (parsed) applyPatchToMap(byDate, parsed.date, parsed.patch);
         }
       }
 
-      // TODO: Fetch exercise sessions from Google Health API exercise endpoint
-      const exerciseRaw = { sessions: [] };
-      const sessions = normalizeExerciseSessions(userId, exerciseRaw).map(
-        mapSummaryForPrisma
-      );
+      const listPoints = await fetchSessionAndDailyPoints(userId, SYNC_DAYS);
+      for (const point of listPoints) {
+        const sleep = parseSleepDataPoint(point);
+        if (sleep) applyPatchToMap(byDate, sleep.date, sleep.patch);
+
+        const oxygen = parseOxygenDataPoint(point);
+        if (oxygen) applyPatchToMap(byDate, oxygen.date, oxygen.patch);
+      }
+
+      const summaries = mergeDailyPatches(userId, byDate);
+      for (const summary of summaries) {
+        const data = mapSummaryForPrisma(summary);
+        await prisma.dailySummary.upsert({
+          where: { userId_date: { userId, date: summary.date } },
+          create: data,
+          update: data,
+        });
+        recordsPulled++;
+      }
+
+      await prisma.exerciseSession.deleteMany({ where: { userId } });
+      const sessions = listPoints
+        .map((p) => parseExerciseDataPoint(userId, p))
+        .filter((s): s is NonNullable<typeof s> => s != null)
+        .map(mapSummaryForPrisma);
+
       if (sessions.length) {
         await prisma.exerciseSession.createMany({ data: sessions });
         recordsPulled += sessions.length;
       }
     }
 
-    await prisma.healthConnection.upsert({
+    await prisma.healthConnection.updateMany({
       where: { userId },
-      create: {
-        userId,
-        encryptedAccessToken: "",
-        scopes: [],
-        lastSyncedAt: new Date(),
-      },
-      update: { lastSyncedAt: new Date() },
+      data: { lastSyncedAt: new Date() },
     });
 
     await prisma.syncLog.update({

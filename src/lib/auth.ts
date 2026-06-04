@@ -2,7 +2,8 @@ import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@/lib/prisma";
-import { GOOGLE_HEALTH_SCOPES_PLACEHOLDER } from "@/lib/constants";
+import { GOOGLE_HEALTH_SCOPES } from "@/lib/constants";
+import { syncHealthTokensFromGoogleAccount } from "@/lib/google-health/tokens";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
@@ -13,13 +14,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       authorization: {
         params: {
-          // TODO: Replace with finalized Google Health API scopes
-          scope: [
-            "openid",
-            "email",
-            "profile",
-            ...GOOGLE_HEALTH_SCOPES_PLACEHOLDER,
-          ].join(" "),
+          scope: ["openid", "email", "profile", ...GOOGLE_HEALTH_SCOPES].join(" "),
           access_type: "offline",
           prompt: "consent",
         },
@@ -29,6 +24,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "database" },
   pages: {
     signIn: "/connect",
+  },
+  events: {
+    async signIn({ user, account }) {
+      if (account?.provider === "google" && user.id && account.access_token) {
+        await syncHealthTokensFromGoogleAccount(user.id, account);
+      }
+    },
   },
   callbacks: {
     async session({ session, user }) {

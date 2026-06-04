@@ -38,7 +38,14 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Mock data mode
 
-By default, `USE_MOCK_HEALTH_DATA=true` serves realistic demo data so the UI works without Google Health API credentials. Set `GOOGLE_HEALTH_API_ENABLED=true` and configure OAuth when ready for live sync.
+For live Google Health API sync, enable the API in Google Cloud, add `googlehealth.*` scopes on the OAuth consent screen, then set:
+
+```bash
+GOOGLE_HEALTH_API_ENABLED=true
+USE_MOCK_HEALTH_DATA=false
+```
+
+Sign in with Google copies OAuth tokens into `HealthConnection`; use **Sync** on the dashboard to pull the last 90 days via `health.googleapis.com/v4`.
 
 ## API routes
 

@@ -100,10 +100,13 @@ export default function SettingsPage() {
             Permissions
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Google Health API scopes (placeholder until API credentials are configured):
+            Google Health API scopes granted for this connection:
           </Typography>
           <List dense>
-            {(status?.scopes?.length ? status.scopes : ["fitness.activity.read", "fitness.sleep.read"]).map(
+            {(status?.scopes?.length
+              ? status.scopes
+              : ["Sign in with Google to load scopes"]
+            ).map(
               (scope) => (
                 <ListItem key={scope}>
                   <ListItemText primary={scope} />

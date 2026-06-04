@@ -20,7 +20,7 @@ import CheckCircleOutlinedIcon from "@mui/icons-material/CheckCircleOutlined";
 import GoogleIcon from "@mui/icons-material/Google";
 import MonitorHeartOutlinedIcon from "@mui/icons-material/MonitorHeartOutlined";
 import { HealthDisclaimer } from "@/components/common/HealthDisclaimer";
-import { GOOGLE_HEALTH_SCOPES_PLACEHOLDER } from "@/lib/constants";
+import { GOOGLE_HEALTH_SCOPES } from "@/lib/constants";
 
 export default function ConnectPage() {
   const sessionQuery = useSession();
@@ -110,7 +110,7 @@ export default function ConnectPage() {
         </Card>
 
         <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
-          Requested scopes (placeholder): {GOOGLE_HEALTH_SCOPES_PLACEHOLDER.join(", ")}
+          Requested scopes: {GOOGLE_HEALTH_SCOPES.join(", ")}
         </Typography>
 
         <HealthDisclaimer />

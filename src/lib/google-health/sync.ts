@@ -35,6 +35,7 @@ export async function syncUserHealthData(userId: string): Promise<{
 
   try {
     let recordsPulled = 0;
+    let sleepSessionsParsed = 0;
 
     if (useMockHealthData()) {
       const days = 365;
@@ -80,8 +81,12 @@ export async function syncUserHealthData(userId: string): Promise<{
 
       const listPoints = await fetchSessionAndDailyPoints(userId, SYNC_DAYS);
       for (const point of listPoints) {
+        const sleepParsed = parseSleepDataPoint(point);
+        if (sleepParsed) {
+          sleepSessionsParsed++;
+          applyPatchToMap(byDate, sleepParsed.date, sleepParsed.patch);
+        }
         const patches = [
-          parseSleepDataPoint(point),
           parseOxygenDataPoint(point),
           parseRestingHeartRateDataPoint(point),
           parseHeartRateVariabilityDataPoint(point),
@@ -119,9 +124,11 @@ export async function syncUserHealthData(userId: string): Promise<{
       data: { lastSyncedAt: new Date() },
     });
 
+    const sleepNote =
+      sleepSessionsParsed > 0 ? ` (${sleepSessionsParsed} sleep sessions)` : "";
     const syncMessage =
       recordsPulled > 0
-        ? "Sync completed successfully"
+        ? `Sync completed successfully${sleepNote}`
         : "Sync finished but no records were returned from Google Health API";
 
     await prisma.syncLog.update({

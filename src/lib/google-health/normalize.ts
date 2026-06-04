@@ -1,5 +1,5 @@
 import type { DailySummary, ExerciseSession, Prisma } from "@prisma/client";
-import { format, parse } from "date-fns";
+import { format, parse, startOfDay } from "date-fns";
 import type { CivilDate, HealthDataPoint } from "./api-types";
 import {
   civilDateTimeToDate,
@@ -45,11 +45,30 @@ function applySleepStageMinutes(
       patch.lightSleepMinutes = (patch.lightSleepMinutes ?? 0) + minutes;
       break;
     case "AWAKE":
+    case "WAKE":
+    case "RESTLESS":
       patch.awakeMinutes = (patch.awakeMinutes ?? 0) + minutes;
       break;
     default:
       break;
   }
+}
+
+function parseNumericValue(value?: string | number): number | null {
+  if (value == null || value === "") return null;
+  const n = typeof value === "number" ? value : Number.parseInt(String(value), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function sleepSessionDate(
+  interval: NonNullable<HealthDataPoint["sleep"]>["interval"]
+): Date | null {
+  return (
+    civilDateTimeToDate(interval?.civilEndTime) ??
+    civilDateTimeToDate(interval?.civilStartTime) ??
+    (interval?.endTime ? startOfDay(new Date(interval.endTime)) : null) ??
+    (interval?.startTime ? startOfDay(new Date(interval.startTime)) : null)
+  );
 }
 
 function dateFromCivilDate(d?: CivilDate): Date | null {
@@ -104,23 +123,32 @@ export function parseSleepDataPoint(point: HealthDataPoint): {
   const sleep = point.sleep;
   if (!sleep?.interval) return null;
 
-  const date =
-    civilDateTimeToDate(sleep.interval.civilEndTime) ??
-    civilDateTimeToDate(sleep.interval.civilStartTime);
+  const date = sleepSessionDate(sleep.interval);
   if (!date) return null;
 
   const patch: DailyMetricsPatch = {};
 
   if (sleep.summary) {
-    patch.sleepMinutes = parseIntString(sleep.summary.minutesAsleep);
+    patch.sleepMinutes =
+      parseIntString(sleep.summary.minutesAsleep) ??
+      parseNumericValue(sleep.summary.totalMinutesAsleep);
     patch.awakeMinutes = parseIntString(sleep.summary.minutesAwake);
 
     if (patch.sleepMinutes == null) {
       patch.sleepMinutes = parseIntString(sleep.summary.minutesInSleepPeriod);
     }
 
+    const aggregated = sleep.summary.stages;
+    if (aggregated) {
+      if (aggregated.deep != null) patch.deepSleepMinutes = aggregated.deep;
+      if (aggregated.light != null) patch.lightSleepMinutes = aggregated.light;
+      if (aggregated.rem != null) patch.remSleepMinutes = aggregated.rem;
+      const awake = aggregated.wake ?? aggregated.awake;
+      if (awake != null) patch.awakeMinutes = awake;
+    }
+
     for (const stage of sleep.summary.stagesSummary ?? []) {
-      const minutes = parseIntString(stage.minutes) ?? 0;
+      const minutes = parseNumericValue(stage.minutes) ?? 0;
       if (minutes > 0) applySleepStageMinutes(patch, stage.type, minutes);
     }
   }

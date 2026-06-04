@@ -1,4 +1,4 @@
-import { addDays, format, min as minDate, subDays } from "date-fns";
+import { addDays, format, min as minDate, startOfDay, subDays } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { decryptToken, encryptToken } from "@/lib/crypto";
 import { useMockHealthData } from "@/lib/config";
@@ -16,6 +16,7 @@ import type {
   DailyRollupDataPoint,
   HealthDataPoint,
 } from "./api-types";
+import { civilDateTimeToDate } from "./rollup-parser";
 
 const GOOGLE_HEALTH_API_BASE = "https://health.googleapis.com";
 
@@ -36,6 +37,32 @@ function civilRange(start: Date, end: Date): CivilTimeInterval {
 
 function formatCivilDate(d: Date): string {
   return format(d, "yyyy-MM-dd");
+}
+
+function sleepPointInDateRange(
+  point: HealthDataPoint,
+  start: string,
+  end: string
+): boolean {
+  const interval = point.sleep?.interval;
+  if (!interval) return false;
+
+  const endTime = interval.endTime ?? interval.startTime;
+  if (endTime) {
+    const key = formatCivilDate(new Date(endTime));
+    return key >= start && key < end;
+  }
+
+  const civil =
+    civilDateFromInterval(interval.civilEndTime) ??
+    civilDateFromInterval(interval.civilStartTime);
+  return civil != null && civil >= start && civil < end;
+}
+
+function civilDateFromInterval(civil?: { date?: CivilDate }): string | null {
+  const d = civil?.date;
+  if (!d?.year || !d?.month || !d?.day) return null;
+  return formatCivilDate(new Date(d.year, d.month - 1, d.day));
 }
 
 function* chunkDateRange(
@@ -200,6 +227,65 @@ export async function fetchDailyRollups(
   return allPoints;
 }
 
+async function fetchListPages(
+  userId: string,
+  parent: string,
+  dataType: string,
+  start: string,
+  end: string,
+  filter: string | undefined,
+  pageSize: string,
+  maxPages: number
+): Promise<HealthDataPoint[]> {
+  const allPoints: HealthDataPoint[] = [];
+  let pageToken: string | undefined;
+  let pagesFetched = 0;
+
+  do {
+    const params = new URLSearchParams({ pageSize });
+    if (filter) params.set("filter", filter);
+    if (pageToken) params.set("pageToken", pageToken);
+
+    const response = await healthApiFetch(
+      userId,
+      `/v4/${parent}/dataPoints?${params.toString()}`
+    );
+
+    if (!response?.ok) {
+      console.error(
+        `Google Health list ${dataType} failed:`,
+        response?.status,
+        await response?.text()
+      );
+      break;
+    }
+
+    const json = (await response.json()) as {
+      dataPoints?: HealthDataPoint[];
+      nextPageToken?: string;
+    };
+
+    if (json.dataPoints?.length) {
+      let points = json.dataPoints;
+      if (dataType === "sleep") {
+        points = points.filter((p) => sleepPointInDateRange(p, start, end));
+      } else if (dataType === "daily-oxygen-saturation" && !filter) {
+        points = points.filter((p) => {
+          const d = p.dailyOxygenSaturation?.date;
+          if (!d?.year || !d.month || !d.day) return false;
+          const key = formatCivilDate(new Date(d.year, d.month - 1, d.day));
+          return key >= start && key < end;
+        });
+      }
+      allPoints.push(...points);
+    }
+    pageToken = json.nextPageToken;
+    pagesFetched++;
+  } while (pageToken && pagesFetched < maxPages);
+
+  return allPoints;
+}
+
 export async function listHealthDataPoints(
   userId: string,
   dataType: string,
@@ -212,8 +298,11 @@ export async function listHealthDataPoints(
   const end = formatCivilDate(endDate);
   const parent = `users/me/dataTypes/${dataType}`;
 
+  const rangeStartIso = startOfDay(startDate).toISOString();
+  const rangeEndIso = startOfDay(addDays(endDate, 1)).toISOString();
+
   const filterByType: Record<string, string> = {
-    sleep: `sleep.interval.civil_end_time >= "${start}" AND sleep.interval.civil_end_time < "${end}"`,
+    sleep: `sleep.interval.end_time >= "${rangeStartIso}" AND sleep.interval.end_time < "${rangeEndIso}"`,
     exercise: `exercise.interval.civil_start_time >= "${start}" AND exercise.interval.civil_start_time < "${end}"`,
     "daily-resting-heart-rate": `dailyRestingHeartRate.date >= "${start}" AND dailyRestingHeartRate.date < "${end}"`,
     "daily-heart-rate-variability": `dailyHeartRateVariability.date >= "${start}" AND dailyHeartRateVariability.date < "${end}"`,
@@ -227,46 +316,32 @@ export async function listHealthDataPoints(
         ? "100"
         : "100";
 
-  const allPoints: HealthDataPoint[] = [];
-  let pageToken: string | undefined;
-  const isOxygenWithoutFilter = dataType === "daily-oxygen-saturation" && !filter;
-  let pagesFetched = 0;
-  const maxPages = isOxygenWithoutFilter ? 15 : 50;
+  const maxPages =
+    dataType === "daily-oxygen-saturation" && !filter ? 15 : dataType === "sleep" ? 20 : 50;
 
-  do {
-    const params = new URLSearchParams({ pageSize });
-    if (filter) params.set("filter", filter);
-    if (pageToken) params.set("pageToken", pageToken);
+  let allPoints = await fetchListPages(
+    userId,
+    parent,
+    dataType,
+    start,
+    end,
+    filter,
+    pageSize,
+    maxPages
+  );
 
-    const response = await healthApiFetch(
+  if (dataType === "sleep" && allPoints.length === 0) {
+    allPoints = await fetchListPages(
       userId,
-      `/v4/${parent}/dataPoints?${params.toString()}`
+      parent,
+      dataType,
+      start,
+      end,
+      undefined,
+      pageSize,
+      maxPages
     );
-
-    if (!response?.ok) {
-      console.error(`Google Health list ${dataType} failed:`, response?.status, await response?.text());
-      break;
-    }
-
-    const json = (await response.json()) as {
-      dataPoints?: HealthDataPoint[];
-      nextPageToken?: string;
-    };
-
-    if (json.dataPoints?.length) {
-      const points = isOxygenWithoutFilter
-        ? json.dataPoints.filter((p) => {
-            const d = p.dailyOxygenSaturation?.date;
-            if (!d?.year || !d.month || !d.day) return false;
-            const key = formatCivilDate(new Date(d.year, d.month - 1, d.day));
-            return key >= start && key < end;
-          })
-        : json.dataPoints;
-      allPoints.push(...points);
-    }
-    pageToken = json.nextPageToken;
-    pagesFetched++;
-  } while (pageToken && pagesFetched < maxPages);
+  }
 
   return allPoints;
 }

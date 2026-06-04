@@ -55,7 +55,19 @@ export interface HealthDataPoint {
       minutesAsleep?: string;
       minutesAwake?: string;
       minutesInSleepPeriod?: string;
-      stagesSummary?: Array<{ type?: string; minutes?: string }>;
+      minutesAfterWakeUp?: string;
+      minutesToFallAsleep?: string;
+      totalMinutesAsleep?: number | string;
+      totalTimeInBed?: number | string;
+      stagesSummary?: Array<{ type?: string; minutes?: string | number; count?: string }>;
+      /** Aggregated stage minutes (newer API shape). */
+      stages?: {
+        deep?: number;
+        light?: number;
+        rem?: number;
+        wake?: number;
+        awake?: number;
+      };
     };
     stages?: Array<{
       type?: string;

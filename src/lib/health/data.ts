@@ -30,27 +30,12 @@ export async function getDailySummaries(
   }
 
   try {
-    const rows = await prisma.dailySummary.findMany({
+    return await prisma.dailySummary.findMany({
       where: { userId, date: { gte: since } },
       orderBy: { date: "asc" },
     });
-    if (rows.length) return rows;
-
-    const mock = generateMockDailySummaries(userId, rangeDays);
-    return mock.map((m, i) => ({
-      ...m,
-      id: `mock-${i}`,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })) as DailySummary[];
   } catch {
-    const mock = generateMockDailySummaries(userId, rangeDays);
-    return mock.map((m, i) => ({
-      ...m,
-      id: `mock-${i}`,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })) as DailySummary[];
+    return [];
   }
 }
 
@@ -71,27 +56,12 @@ export async function getExerciseSessions(
   }
 
   try {
-    const rows = await prisma.exerciseSession.findMany({
+    return await prisma.exerciseSession.findMany({
       where: { userId, date: { gte: since } },
       orderBy: { date: "desc" },
     });
-    if (rows.length) return rows;
-
-    const mock = generateMockExerciseSessions(userId, rangeDays);
-    return mock.map((m, i) => ({
-      ...m,
-      id: `mock-ex-${i}`,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })) as ExerciseSession[];
   } catch {
-    const mock = generateMockExerciseSessions(userId, rangeDays);
-    return mock.map((m, i) => ({
-      ...m,
-      id: `mock-ex-${i}`,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })) as ExerciseSession[];
+    return [];
   }
 }
 
@@ -112,10 +82,10 @@ export async function getHealthStatus(userId: string) {
     };
   } catch {
     return {
-      connected: useMockHealthData(),
-      lastSyncedAt: new Date(),
+      connected: false,
+      lastSyncedAt: null,
       scopes: [],
-      mockMode: true,
+      mockMode: useMockHealthData(),
     };
   }
 }

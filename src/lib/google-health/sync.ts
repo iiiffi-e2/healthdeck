@@ -113,17 +113,22 @@ export async function syncUserHealthData(userId: string): Promise<{
       data: { lastSyncedAt: new Date() },
     });
 
+    const syncMessage =
+      recordsPulled > 0
+        ? "Sync completed successfully"
+        : "Sync finished but no records were returned from Google Health API";
+
     await prisma.syncLog.update({
       where: { id: syncLog.id },
       data: {
         status: "success",
         finishedAt: new Date(),
         recordsPulled,
-        message: "Sync completed successfully",
+        message: syncMessage,
       },
     });
 
-    return { status: "success", recordsPulled, message: "Sync completed" };
+    return { status: "success", recordsPulled, message: syncMessage };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Sync failed";
     await prisma.syncLog.update({

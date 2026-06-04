@@ -17,7 +17,7 @@ import type {
   HealthDataPoint,
 } from "./api-types";
 
-const GOOGLE_HEALTH_API_BASE = "https://health.googleapis.com/v4";
+const GOOGLE_HEALTH_API_BASE = "https://health.googleapis.com";
 
 function toCivilDate(d: Date): CivilDate {
   return {
